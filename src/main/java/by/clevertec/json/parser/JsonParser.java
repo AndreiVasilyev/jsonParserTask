@@ -1,7 +1,7 @@
 package by.clevertec.json.parser;
 
 
-import by.clevertec.json.JsonSyntaxException;
+import by.clevertec.json.exception.JsonSyntaxException;
 
 
 import java.lang.reflect.Field;
@@ -12,10 +12,12 @@ import java.lang.reflect.ParameterizedType;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedList;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -41,8 +43,14 @@ public class JsonParser {
     }
 
     private <T> T parseObject(String json, Class<T> clazz) throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException, ClassNotFoundException {
+        if (clazz.equals(Map.class)) {
+            System.out.println("found map:" + clazz.getTypeName());
+            System.out.println(Arrays.toString(clazz.getGenericInterfaces()));
+        }
+
         T currentObject = clazz.getConstructor().newInstance();
         Field[] declaredFields = clazz.getDeclaredFields();
+
         for (Field declaredField : declaredFields) {
             Matcher matcher = prepareMatcher(json, FIELD_START_TEMPLATE, declaredField.getName());
             if (matcher.find()) {
@@ -59,7 +67,6 @@ public class JsonParser {
                                 .replace(QUOTE, EMPTY)
                                 .replace(COMMA, EMPTY)
                                 .replaceFirst(COLON, EMPTY);
-
                         Class<?> fieldClazz = declaredField.getType();
                         if (fieldClazz.equals(OffsetDateTime.class)) {
                             Method method = fieldClazz.getMethod("parse", CharSequence.class, DateTimeFormatter.class);
@@ -91,12 +98,10 @@ public class JsonParser {
                                     throw new JsonSyntaxException("Invalid JSON syntax when parsing object field");
                             }
                         }
-                        OffsetDateTime offsetDateTime;
-                        System.out.println("object=" + currentObject);
                         break;
                     }
                     case "{": {
-                        System.out.println("parse object");
+
                         break;
                     }
                     case "[": {
@@ -105,7 +110,7 @@ public class JsonParser {
                             throw new JsonSyntaxException("Invalid JSON syntax when parsing string field");
                         String stringField = stringMatcher.group();
                         json = json.replace(stringField, EMPTY);
-                        String fieldValue = stringField.replace(declaredField.getName(), "");
+                        String fieldValue = stringField.replace(declaredField.getName(), EMPTY);
                         fieldValue = fieldValue.substring(4, fieldValue.length() - 1);
                         Class<?> collectionType = declaredField.getType();
                         String genericType = ((ParameterizedType) declaredField.getGenericType())
@@ -121,7 +126,27 @@ public class JsonParser {
                         break;
                     }
                     default:
-                        System.out.println("no match found");
+                        if (Character.isDigit(symbol.charAt(0))) {
+                            Matcher digitsMatcher = prepareMatcher(json, FIELD_DIGITS_TEMPLATE, declaredField.getName());
+                            if (!digitsMatcher.find())
+                                throw new JsonSyntaxException("Invalid JSON syntax when parsing number field");
+                            String numberField = digitsMatcher.group();
+                            json = json.replace(numberField, EMPTY);
+                            String fieldValue = numberField.replace(declaredField.getName(), EMPTY)
+                                    .replace(QUOTE, EMPTY)
+                                    .replace(COMMA, EMPTY)
+                                    .replaceFirst(COLON, EMPTY);
+                            Class<?> fieldClazz = declaredField.getType();
+                            Method method;
+                            if (fieldClazz.isPrimitive()) {
+                                String methodName = "parse" + fieldClazz.getSimpleName();
+                                method = fieldClazz.getMethod(methodName, String.class);
+                            } else {
+                                method = fieldClazz.getMethod("valueOf", String.class);
+                            }
+                            Object fieldInstance = method.invoke(null, fieldValue);
+                            setFieldValue(declaredField, currentObject, fieldInstance);
+                        }
                 }
             }
         }

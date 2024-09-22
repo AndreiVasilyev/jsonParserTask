@@ -1,4 +1,4 @@
-package by.clevertec.json;
+package by.clevertec.json.exception;
 
 public class JsonSyntaxException extends RuntimeException {
     private static final long serialVersionUID = 1L;
