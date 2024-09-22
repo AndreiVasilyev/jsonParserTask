@@ -3,6 +3,7 @@ build
 gradle
 gradlew*
 *.bat
+*.gradle
 
 ### IntelliJ IDEA ###
 .idea
