@@ -9,6 +9,7 @@ public class StringConstants {
     public static final String FIELD_STRING_TEMPLATE = "\\\"%s\\\":\\\"[^\\\"]+\\\"[,]?";
     public static final String FIELD_ARRAY_TEMPLATE = "\\\"%s\\\":\\[.+\\]";
     public static final String FIELD_DIGITS_TEMPLATE="\\\"%s\\\":\\d+[\\.]?\\d+[,]?";
+    public static final String FIELD_OBJECT_TEMPLATE="\\\"%s\\\":\\{.+";
     public static final String EMPTY = "";
     public static final String QUOTE = "\"";
     public static final String COMMA = ",";
