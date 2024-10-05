@@ -1,5 +1,5 @@
 package by.clevertec.json.parser;
 
 public interface ObjectToJsonParser {
-    String toJson(Object obj);
+    String toJson(Object obj) throws IllegalAccessException, NoSuchMethodException;
 }

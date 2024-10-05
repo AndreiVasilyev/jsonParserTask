@@ -94,12 +94,12 @@ public class JsonToObjectParserImpl implements JsonToObjectParser {
                         }
                     }
                     case OPEN_SQUARE_BRACKET: {
-                        Matcher stringMatcher = prepareMatcher(json, FIELD_ARRAY_TEMPLATE, declaredField.getName());
-                        if (!stringMatcher.find())
+                        Matcher collectionMatcher = prepareMatcher(json, FIELD_ARRAY_TEMPLATE, declaredField.getName());
+                        if (!collectionMatcher.find())
                             throw new JsonSyntaxException("Invalid JSON syntax when parsing string field");
-                        String stringField = stringMatcher.group();
-                        json = json.replace(stringField, EMPTY);
-                        String fieldValue = stringField.replace(declaredField.getName(), EMPTY);
+                        String collectionField = collectionMatcher.group();
+                        json = json.replace(collectionField, EMPTY);
+                        String fieldValue = collectionField.replace(declaredField.getName(), EMPTY);
                         fieldValue = fieldValue.substring(4, fieldValue.length() - 1);
                         Class<?> genericType = (Class<?>) ((ParameterizedType) declaredField.getGenericType())
                                 .getActualTypeArguments()[0];
@@ -146,7 +146,7 @@ public class JsonToObjectParserImpl implements JsonToObjectParser {
                 Object parsedObject = parseObject(collectionElement, collectionType);
                 collection.add(parsedObject);
                 json = json.replace(collectionElement, EMPTY);
-                if (json.startsWith(COMMA)) break;
+                if (json.startsWith(COMMA)&&json.length()==1) break;
             }
         }
         return collection;
