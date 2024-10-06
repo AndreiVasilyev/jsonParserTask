@@ -43,9 +43,14 @@ public class JsonToObjectParserImpl implements JsonToObjectParser {
         this.dateTimeFormatter = dateTimeFormatter;
     }
 
-    public <T> T toObject(String json, Class<T> clazz) throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException, ClassNotFoundException {
+    public <T> T toObject(String json, Class<T> clazz) {
         String preparedJson = json.replace(NEWLINE, EMPTY).replace(SPACE, EMPTY).trim();
-        return parseObject(preparedJson, clazz);
+        try {
+            return parseObject(preparedJson, clazz);
+        } catch (NoSuchMethodException | InvocationTargetException | InstantiationException | IllegalAccessException |
+                 ClassNotFoundException e) {
+            throw new JsonSyntaxException("JSON syntax exception");
+        }
     }
 
     private <T> T parseObject(String json, Class<T> clazz) throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException, ClassNotFoundException {
@@ -61,7 +66,7 @@ public class JsonToObjectParserImpl implements JsonToObjectParser {
             Matcher matcher = prepareMatcher(json, FIELD_START_TEMPLATE, declaredField.getName());
             if (matcher.find()) {
                 String matchGroup = matcher.group();
-                char startSymbol=matchGroup.charAt(matchGroup.length() - 1);
+                char startSymbol = matchGroup.charAt(matchGroup.length() - 1);
                 Object fieldInstance = switch (startSymbol) {
                     case OPEN_QUOTE: {
                         Matcher stringMatcher = prepareMatcher(json, FIELD_STRING_TEMPLATE, declaredField.getName());
@@ -146,7 +151,7 @@ public class JsonToObjectParserImpl implements JsonToObjectParser {
                 Object parsedObject = parseObject(collectionElement, collectionType);
                 collection.add(parsedObject);
                 json = json.replace(collectionElement, EMPTY);
-                if (json.startsWith(COMMA)&&json.length()==1) break;
+                if (json.startsWith(COMMA) && json.length() == 1) break;
             }
         }
         return collection;

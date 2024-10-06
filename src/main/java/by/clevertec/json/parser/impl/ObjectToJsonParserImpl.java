@@ -1,5 +1,6 @@
 package by.clevertec.json.parser.impl;
 
+import by.clevertec.json.exception.ObjectToJsonParsingException;
 import by.clevertec.json.parser.ObjectToJsonParser;
 
 import java.lang.reflect.Field;
@@ -11,6 +12,17 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import static by.clevertec.json.helper.StringConstants.CLOSE_CURLY_BRACE;
+import static by.clevertec.json.helper.StringConstants.CLOSE_SQUARE_BRACKET;
+import static by.clevertec.json.helper.StringConstants.COLON;
+import static by.clevertec.json.helper.StringConstants.COMMA;
+import static by.clevertec.json.helper.StringConstants.NEWLINE;
+import static by.clevertec.json.helper.StringConstants.OPEN_CURLY_BRACE;
+import static by.clevertec.json.helper.StringConstants.OPEN_SQUARE_BRACKET;
+import static by.clevertec.json.helper.StringConstants.QUOTE;
+import static by.clevertec.json.helper.StringConstants.SPACE;
+import static by.clevertec.json.helper.StringConstants.TAB;
+
 public class ObjectToJsonParserImpl implements ObjectToJsonParser {
 
     private StringBuilder tabSting;
@@ -20,39 +32,46 @@ public class ObjectToJsonParserImpl implements ObjectToJsonParser {
     }
 
     @Override
-    public String toJson(Object obj) throws IllegalAccessException, NoSuchMethodException {
+    public String toJson(Object obj) {
         StringBuilder stringBuilder = new StringBuilder();
-        parseObject(obj, stringBuilder);
+        try {
+            parseObject(obj, stringBuilder);
+        } catch (IllegalAccessException | NoSuchMethodException e) {
+            throw new ObjectToJsonParsingException("ObjectToJsonParsingException");
+        }
         return stringBuilder.toString();
     }
 
     private void parseObject(Object object, StringBuilder stringBuilder) throws IllegalAccessException, NoSuchMethodException {
-        stringBuilder.append(tabSting).append("{");
-        tabSting.append("\t");
+        stringBuilder.append(tabSting).append(OPEN_CURLY_BRACE);
+        tabSting.append(TAB);
         Class<?> clazz = object.getClass();
         Field[] fields = clazz.getDeclaredFields();
         for (Field field : fields) {
             if (!Modifier.isTransient(field.getModifiers())) {
                 Class<?> fieldType = field.getType();
                 field.setAccessible(true);
-                stringBuilder.append("\n")
+                stringBuilder.append(NEWLINE)
                         .append(tabSting)
-                        .append("\"")
+                        .append(QUOTE)
                         .append(field.getName())
-                        .append("\": ");
+                        .append(QUOTE)
+                        .append(COLON)
+                        .append(SPACE);
                 if (fieldType.isPrimitive()) {
                     String fieldValue = getPrimitiveFieldValue(field, object);
-                    stringBuilder.append(fieldValue).append(",");
+                    stringBuilder.append(fieldValue).append(COMMA);
                 } else if (isPrimitiveWrapper(fieldType)) {
                     Object fieldInstance = field.get(object);
                     String fieldValue = fieldInstance.toString();
-                    stringBuilder.append(fieldValue).append(",");
+                    stringBuilder.append(fieldValue).append(COMMA);
                 } else if (fieldType.equals(String.class)) {
                     String fieldValue = (String) field.get(object);
-                    stringBuilder.append("\"").append(fieldValue).append("\",");
+                    stringBuilder.append(QUOTE).append(fieldValue).append(QUOTE).append(COMMA);
                 } else if (fieldType.isAssignableFrom(List.class) || fieldType.isAssignableFrom(Set.class)) {
                     Collection<?> collection = (Collection<?>) field.get(object);
                     parseCollection(collection, stringBuilder);
+                    stringBuilder.append(COMMA);
                 } else if (fieldType.isAssignableFrom(Map.class)) {
                     Map<?, ?> map = (Map<?, ?>) field.get(object);
                     parseMap(map, stringBuilder);
@@ -61,7 +80,7 @@ public class ObjectToJsonParserImpl implements ObjectToJsonParser {
                         || fieldType.getName().contains("time")) {
                     Object fieldInstance = field.get(object);
                     String fieldValue = fieldInstance.toString();
-                    stringBuilder.append("\"").append(fieldValue).append("\",");
+                    stringBuilder.append(QUOTE).append(fieldValue).append(QUOTE).append(COMMA);
                 } else {
                     Object fieldObj = field.get(object);
                     parseObject(fieldObj, stringBuilder);
@@ -70,36 +89,41 @@ public class ObjectToJsonParserImpl implements ObjectToJsonParser {
             }
         }
         tabSting.delete(0, 1);
-        stringBuilder.deleteCharAt(stringBuilder.length()-1);
+        stringBuilder.deleteCharAt(stringBuilder.length() - 1);
         stringBuilder
-                .append("\n")
+                .append(NEWLINE)
                 .append(tabSting)
-                .append("}");
+                .append(CLOSE_CURLY_BRACE);
     }
 
     private void parseMap(Map<?, ?> map, StringBuilder stringBuilder) throws IllegalAccessException, NoSuchMethodException {
-        tabSting.append("\t");
-        stringBuilder.append("{");
+        tabSting.append(TAB);
+        stringBuilder.append(OPEN_CURLY_BRACE);
         for (Map.Entry<?, ?> entry : map.entrySet()) {
             Object key = entry.getKey();
             Object value = entry.getValue();
-            stringBuilder.append("\n")
+            stringBuilder.append(NEWLINE)
                     .append(tabSting);
             parseMapElement(key, stringBuilder);
-            stringBuilder.append(": ");
+            stringBuilder.append(COLON).append(SPACE);
             parseMapElement(value, stringBuilder);
-            stringBuilder.append(",");
+            stringBuilder.append(COMMA);
         }
         tabSting.delete(0, 1);
+        stringBuilder.deleteCharAt(stringBuilder.length() - 1);
+        stringBuilder.append(NEWLINE)
+                .append(tabSting)
+                .append(CLOSE_CURLY_BRACE)
+                .append(COMMA);
     }
 
     private void parseMapElement(Object object, StringBuilder stringBuilder) throws IllegalAccessException, NoSuchMethodException {
         if (object.getClass().isAssignableFrom(String.class)
                 || object.getClass().isAssignableFrom(UUID.class)) {
             String objectValue = object.toString();
-            stringBuilder.append("\"")
+            stringBuilder.append(QUOTE)
                     .append(objectValue)
-                    .append("\"");
+                    .append(QUOTE);
         } else if (isPrimitiveWrapper(object.getClass())
                 || object.getClass().isAssignableFrom(BigDecimal.class)) {
             String objectValue = object.toString();
@@ -110,17 +134,17 @@ public class ObjectToJsonParserImpl implements ObjectToJsonParser {
     }
 
     private void parseCollection(Collection<?> collection, StringBuilder stringBuilder) throws IllegalAccessException, NoSuchMethodException {
-        tabSting.append("\t");
-        stringBuilder.append("[\n");
+        tabSting.append(TAB);
+        stringBuilder.append(OPEN_SQUARE_BRACKET).append(NEWLINE);
         for (Object object : collection) {
             parseObject(object, stringBuilder);
-            stringBuilder.append(",");
+            stringBuilder.append(COMMA);
         }
         tabSting.delete(0, 1);
-        stringBuilder.deleteCharAt(stringBuilder.length()-1);
-        stringBuilder.append("\n")
+        stringBuilder.deleteCharAt(stringBuilder.length() - 1);
+        stringBuilder.append(NEWLINE)
                 .append(tabSting)
-                .append("]");
+                .append(CLOSE_SQUARE_BRACKET);
     }
 
     private boolean isPrimitiveWrapper(Class<?> clazz) {
