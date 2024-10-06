@@ -1,7 +1,9 @@
-package by.clevertec.json.parser;
+package by.clevertec.json.parser.impl;
 
 
+import by.clevertec.json.dto.help.ParserResult;
 import by.clevertec.json.exception.JsonSyntaxException;
+import by.clevertec.json.parser.JsonToObjectParser;
 
 
 import java.lang.reflect.Constructor;
@@ -16,7 +18,6 @@ import java.math.BigInteger;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Deque;
 import java.util.HashMap;
@@ -30,27 +31,34 @@ import java.util.regex.Pattern;
 import static by.clevertec.json.helper.StringConstants.*;
 
 
-public class JsonParser {
+public class JsonToObjectParserImpl implements JsonToObjectParser {
 
     private DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ISO_OFFSET_DATE_TIME;
 
 
-    public JsonParser() {
+    public JsonToObjectParserImpl() {
     }
 
-    public JsonParser(DateTimeFormatter dateTimeFormatter) {
+    public JsonToObjectParserImpl(DateTimeFormatter dateTimeFormatter) {
         this.dateTimeFormatter = dateTimeFormatter;
     }
 
-    public <T> T toObject(String json, Class<T> clazz) throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException, ClassNotFoundException {
+    public <T> T toObject(String json, Class<T> clazz) {
         String preparedJson = json.replace(NEWLINE, EMPTY).replace(SPACE, EMPTY).trim();
-        return parseObject(preparedJson, clazz);
+        try {
+            return parseObject(preparedJson, clazz);
+        } catch (NoSuchMethodException | InvocationTargetException | InstantiationException | IllegalAccessException |
+                 ClassNotFoundException e) {
+            throw new JsonSyntaxException("JSON syntax exception");
+        }
     }
 
     private <T> T parseObject(String json, Class<T> clazz) throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException, ClassNotFoundException {
         if (clazz.equals(Map.class)) {
-            System.out.println("Map=" + clazz.getTypeParameters()[0].getName());
-            return (T) parseMap(json, clazz.getGenericSuperclass());
+            if (clazz.getTypeParameters().length == 0) {
+                throw new JsonSyntaxException("Map must have type parameters");
+            }
+            return (T) parseMap(json, clazz);
         }
         T currentObject = clazz.getConstructor().newInstance();
         Field[] declaredFields = clazz.getDeclaredFields();
@@ -58,9 +66,9 @@ public class JsonParser {
             Matcher matcher = prepareMatcher(json, FIELD_START_TEMPLATE, declaredField.getName());
             if (matcher.find()) {
                 String matchGroup = matcher.group();
-                String symbol = matchGroup.substring(matchGroup.length() - 1);
-                switch (symbol) {
-                    case "\"": {
+                char startSymbol = matchGroup.charAt(matchGroup.length() - 1);
+                Object fieldInstance = switch (startSymbol) {
+                    case OPEN_QUOTE: {
                         Matcher stringMatcher = prepareMatcher(json, FIELD_STRING_TEMPLATE, declaredField.getName());
                         if (!stringMatcher.find())
                             throw new JsonSyntaxException("Invalid JSON syntax when parsing string field");
@@ -71,11 +79,9 @@ public class JsonParser {
                                 .replace(COMMA, EMPTY)
                                 .replaceFirst(COLON, EMPTY);
                         Class<?> fieldClazz = declaredField.getType();
-                        Object fieldInstance = parseStringValue(fieldValue, fieldClazz);
-                        setFieldValue(declaredField, currentObject, fieldInstance);
-                        break;
+                        yield parseStringValue(fieldValue, fieldClazz);
                     }
-                    case "{": {
+                    case OPEN_CURLY_BRACE: {
                         Matcher objectMatcher = prepareMatcher(json, FIELD_OBJECT_TEMPLATE, declaredField.getName());
                         if (!objectMatcher.find())
                             throw new JsonSyntaxException("Invalid JSON syntax when parsing object field");
@@ -83,60 +89,29 @@ public class JsonParser {
                         String fieldValue = objectField.replace(declaredField.getName(), EMPTY)
                                 .replaceFirst(COLON, EMPTY)
                                 .replaceFirst(QUOTE + QUOTE, EMPTY);
-                        Deque<Character> openBrackets = new LinkedList<>();
-                        StringBuilder stringBuilder = new StringBuilder();
-                        for (Character character : fieldValue.toCharArray()) {
-                            if (stringBuilder.isEmpty() && character.equals(',')) {
-                                fieldValue = fieldValue.replaceFirst(COMMA, EMPTY);
-                                continue;
-                            }
-                            stringBuilder.append(character);
-                            if (character.equals('{') || character.equals('[')) {
-                                openBrackets.push(character);
-                            } else if (character.equals('}') || character.equals(']')) {
-                                openBrackets.pop();
-                            }
-                            if (openBrackets.isEmpty()) {
-                                break;
-                            }
-                        }
-                        fieldValue = stringBuilder.toString();
+                        fieldValue = extractObjectValue(fieldValue);
                         json = json.replace((QUOTE + declaredField.getName() + QUOTE + COLON), EMPTY)
                                 .replace(fieldValue, EMPTY);
-
-                        Object parsedObject;
                         if (declaredField.getType().isAssignableFrom(Map.class)) {
-                            parsedObject = parseMap(fieldValue, declaredField.getGenericType());
+                            yield parseMap(fieldValue, declaredField.getGenericType());
                         } else {
-                            parsedObject = parseObject(fieldValue, declaredField.getClass());
+                            yield parseObject(fieldValue, declaredField.getClass());
                         }
-
-                        setFieldValue(declaredField, currentObject, parsedObject);
-                        break;
                     }
-                    case "[": {
-                        Matcher stringMatcher = prepareMatcher(json, FIELD_ARRAY_TEMPLATE, declaredField.getName());
-                        if (!stringMatcher.find())
+                    case OPEN_SQUARE_BRACKET: {
+                        Matcher collectionMatcher = prepareMatcher(json, FIELD_ARRAY_TEMPLATE, declaredField.getName());
+                        if (!collectionMatcher.find())
                             throw new JsonSyntaxException("Invalid JSON syntax when parsing string field");
-                        String stringField = stringMatcher.group();
-                        json = json.replace(stringField, EMPTY);
-                        String fieldValue = stringField.replace(declaredField.getName(), EMPTY);
+                        String collectionField = collectionMatcher.group();
+                        json = json.replace(collectionField, EMPTY);
+                        String fieldValue = collectionField.replace(declaredField.getName(), EMPTY);
                         fieldValue = fieldValue.substring(4, fieldValue.length() - 1);
-                        Class<?> collectionType = declaredField.getType();
-                        String genericType = ((ParameterizedType) declaredField.getGenericType())
-                                .getActualTypeArguments()[0]
-                                .getTypeName();
-
-                        Collection<Object> fieldInstance = new ArrayList<>();
-                        if (collectionType.isAssignableFrom(Set.class)) {
-                            fieldInstance = new HashSet<>();
-                        }
-                        parseCollection(fieldValue, fieldInstance, Class.forName(genericType));
-                        setFieldValue(declaredField, currentObject, fieldInstance);
-                        break;
+                        Class<?> genericType = (Class<?>) ((ParameterizedType) declaredField.getGenericType())
+                                .getActualTypeArguments()[0];
+                        yield parseCollection(fieldValue, genericType);
                     }
                     default:
-                        if (!Character.isDigit(symbol.charAt(0))) {
+                        if (!Character.isDigit(startSymbol)) {
                             throw new JsonSyntaxException("Invalid JSON syntax when parsing number field");
                         }
                         Matcher digitsMatcher = prepareMatcher(json, FIELD_DIGITS_TEMPLATE, declaredField.getName());
@@ -149,21 +124,15 @@ public class JsonParser {
                                 .replace(COMMA, EMPTY)
                                 .replaceFirst(COLON, EMPTY);
                         Class<?> fieldClazz = declaredField.getType();
-                        Object fieldInstance = parseNumberValue(fieldValue, fieldClazz);
-                        setFieldValue(declaredField, currentObject, fieldInstance);
-
-
-                }
+                        yield parseNumberValue(fieldValue, fieldClazz);
+                };
+                declaredField.setAccessible(true);
+                declaredField.set(currentObject, fieldInstance);
             }
         }
         return currentObject;
     }
 
-    private void setFieldValue(Field field, Object instanceWithField, Object fieldValue) throws IllegalAccessException {
-        field.setAccessible(true);
-        field.set(instanceWithField, fieldValue);
-        field.setAccessible(false);
-    }
 
     private Matcher prepareMatcher(String sourceString, String template, String templateValue) {
         String fieldStartRegex = String.format(template, templateValue);
@@ -171,38 +140,29 @@ public class JsonParser {
         return pattern.matcher(sourceString);
     }
 
-    private void parseCollection(String json, Collection<Object> collection, Class<?> collectionType) throws IllegalAccessException, InvocationTargetException, NoSuchMethodException, InstantiationException, ClassNotFoundException {
-        if (json.startsWith("{")) {
-            Deque<Character> openBrackets = new LinkedList<>();
-            StringBuilder stringBuilder = new StringBuilder();
-            for (Character character : json.toCharArray()) {
-                if (stringBuilder.isEmpty() && character.equals(',')) {
-                    json = json.replaceFirst(COMMA, EMPTY);
-                    continue;
-                }
-                stringBuilder.append(character);
-                if (character.equals('{') || character.equals('[')) {
-                    openBrackets.push(character);
-                } else if (character.equals('}') || character.equals(']')) {
-                    openBrackets.pop();
-                }
-                if (openBrackets.isEmpty()) {
-                    Object object = parseObject(stringBuilder.toString(), collectionType);
-                    collection.add(object);
-                    json = json.replace(stringBuilder.toString(), EMPTY);
-                    stringBuilder.setLength(0);
-                }
+    private Collection<Object> parseCollection(String json, Class<?> collectionType) throws IllegalAccessException, InvocationTargetException, NoSuchMethodException, InstantiationException, ClassNotFoundException {
+        Collection<Object> collection = new ArrayList<>();
+        if (collectionType.isAssignableFrom(Set.class)) {
+            collection = new HashSet<>();
+        }
+        if (json.startsWith(String.valueOf(OPEN_CURLY_BRACE))) {
+            while (!json.isEmpty()) {
+                String collectionElement = extractObjectValue(json);
+                Object parsedObject = parseObject(collectionElement, collectionType);
+                collection.add(parsedObject);
+                json = json.replace(collectionElement, EMPTY);
+                if (json.startsWith(COMMA) && json.length() == 1) break;
             }
         }
+        return collection;
     }
 
-    private Object parseStringValue(String value, Class clazz) throws IllegalAccessException, InvocationTargetException, InstantiationException, NoSuchMethodException {
-        System.out.println("start data=" + value + "\n start class=" + clazz);
+    private Object parseStringValue(String value, Class<?> clazz) throws IllegalAccessException, InvocationTargetException, InstantiationException, NoSuchMethodException {
         if (clazz.equals(String.class)) {
             return value;
         }
         if (clazz.equals(OffsetDateTime.class)) {
-            Method method = clazz.getMethod("parse", CharSequence.class, DateTimeFormatter.class);
+            Method method = clazz.getMethod(PARSE_METHOD_NAME, CharSequence.class, DateTimeFormatter.class);
             return method.invoke(null, value, dateTimeFormatter);
         }
         try {
@@ -230,10 +190,10 @@ public class JsonParser {
         }
         Method method;
         if (clazz.isPrimitive()) {
-            String methodName = "parse" + clazz.getSimpleName();
+            String methodName = PARSE_METHOD_NAME + clazz.getSimpleName();
             method = clazz.getMethod(methodName, String.class);
         } else {
-            method = clazz.getMethod("valueOf", String.class);
+            method = clazz.getMethod(VALUE_OF_METHOD_NAME, String.class);
         }
         return method.invoke(null, value);
     }
@@ -246,74 +206,27 @@ public class JsonParser {
         Class<?> valueType = (Class<?>) parameterizedType.getActualTypeArguments()[1];
         json = json.substring(1, json.length() - 1);
         while (!json.isEmpty()) {
-            System.out.println("json="+json);
-            Object keyInstance= parseObjectForMap(json, keyType);
-            System.out.println("json after=" + json);
-           /* char startSymbol = json.charAt(0);
-            Object keyInstance = switch (startSymbol) {
-                case '"': {
-                    String keyValue = extractStringValue(json);
-                    json = json.replaceFirst(keyValue, EMPTY);
-                    keyValue = keyValue.substring(1, keyValue.length() - 1);
-                    yield parseStringValue(keyValue, keyType);
-                }
-                case '{': {
-                    System.out.println("object found");
-                    yield null;
-                }
-                case '[': {
-                    System.out.println("collection found");
-                    yield null;
-                }
-                default: {
-                    System.out.println("primitive found");
-                    yield null;
-                }
-            };*/
+            ParserResult parserResult = parseObjectForMap(json, keyType);
+            Object keyInstance = parserResult.instance();
+            json = parserResult.json();
             json = json.replaceFirst(COLON, EMPTY);
-            Object valueInstance= parseObjectForMap(json, valueType);
-
-            /*startSymbol = json.charAt(0);
-            Object valueInstance = switch (startSymbol) {
-                case '"': {
-                    System.out.println("string found");
-                    yield null;
-                }
-                case '{': {
-                    System.out.println("object found");
-                    yield null;
-                }
-                case '[': {
-                    System.out.println("collection found");
-                    yield null;
-                }
-                default: {
-                    if (!Character.isDigit(startSymbol)) {
-                        throw new JsonSyntaxException("Invalid JSON syntax when parsing number field");
-                    }
-                    String numberValue = extractNumberValue(json);
-                    json = json.replaceFirst(numberValue, EMPTY).replaceFirst(COMMA, EMPTY);
-                    yield parseNumberValue(numberValue, valueType);
-                }
-            }; */
+            parserResult = parseObjectForMap(json, valueType);
+            Object valueInstance = parserResult.instance();
+            json = parserResult.json();
             map.put(keyInstance, valueInstance);
         }
-
-
-        System.out.println("json map:" + json);
         return map;
     }
 
-    private Object parseObjectForMap(String json, Class<?> type) throws InvocationTargetException, IllegalAccessException, NoSuchMethodException, InstantiationException, ClassNotFoundException {
-        char startSymbol=json.charAt(0);
+    private ParserResult parseObjectForMap(String json, Class<?> type) throws InvocationTargetException, IllegalAccessException, NoSuchMethodException, InstantiationException, ClassNotFoundException {
+        char startSymbol = json.charAt(0);
         return switch (startSymbol) {
             case '"': {
-                System.out.println("String parsing before gson="+json);
                 String stringValue = extractStringValue(json);
-                json=json.replaceFirst(stringValue, EMPTY);
+                json = json.replaceFirst(stringValue, EMPTY);
                 stringValue = stringValue.substring(1, stringValue.length() - 1);
-                System.out.println("stringParsing gson=" + json);
-                yield parseStringValue(stringValue, type);
+                Object instance = parseStringValue(stringValue, type);
+                yield new ParserResult(json, instance);
             }
             case '{': {
                 //TODO handle case with object
@@ -329,7 +242,8 @@ public class JsonParser {
                 }
                 String numberValue = extractNumberValue(json);
                 json = json.replaceFirst(numberValue, EMPTY).replaceFirst(COMMA, EMPTY);
-                yield parseNumberValue(numberValue, type);
+                Object instance = parseNumberValue(numberValue, type);
+                yield new ParserResult(json, instance);
             }
         };
     }
@@ -339,7 +253,7 @@ public class JsonParser {
         StringBuilder stringBuilder = new StringBuilder();
         for (Character character : json.toCharArray()) {
             stringBuilder.append(character);
-            if (character.equals('"')) {
+            if (character.equals(OPEN_QUOTE)) {
                 delimitersStack.push(character);
             }
             if (delimitersStack.size() == 2) {
@@ -352,7 +266,7 @@ public class JsonParser {
     private String extractNumberValue(String json) {
         StringBuilder stringBuilder = new StringBuilder();
         for (Character character : json.toCharArray()) {
-            if (character.equals(',')) {
+            if (character.equals(COMMA_CHAR)) {
                 break;
             }
             stringBuilder.append(character);
@@ -360,5 +274,26 @@ public class JsonParser {
         return stringBuilder.toString();
     }
 
+    private String extractObjectValue(String fieldValue) {
+        Deque<Character> openBrackets = new LinkedList<>();
+        StringBuilder stringBuilder = new StringBuilder();
+        for (Character character : fieldValue.toCharArray()) {
+            if (stringBuilder.isEmpty() && character.equals(COMMA_CHAR)) {
+                fieldValue = fieldValue.replaceFirst(COMMA, EMPTY);
+                continue;
+            }
+            stringBuilder.append(character);
+            if (character.equals(OPEN_CURLY_BRACE) || character.equals(OPEN_SQUARE_BRACKET)) {
+                openBrackets.push(character);
+            } else if (character.equals(CLOSE_CURLY_BRACE) || character.equals(CLOSE_SQUARE_BRACKET)) {
+                openBrackets.pop();
+            }
+            if (openBrackets.isEmpty()) {
+                break;
+            }
+        }
+        return stringBuilder.toString();
+    }
 
 }
+
